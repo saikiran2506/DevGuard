@@ -1,5 +1,4 @@
-
-name: DevGuard CI
+﻿name: DevGuard CI
 
 on:
   push:
@@ -7,13 +6,19 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
+    name: Tests and Gitleaks Security Gate
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -27,3 +32,8 @@ jobs:
 
       - name: Run tests
         run: python -m pytest -v
+
+      - name: Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
