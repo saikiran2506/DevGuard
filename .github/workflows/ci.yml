@@ -42,10 +42,11 @@ jobs:
         run: docker build -t devguard:ci .
 
       - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: devguard:ci
           format: table
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+
