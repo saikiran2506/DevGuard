@@ -1,0 +1,12 @@
+﻿.venv/
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+.git/
+.github/
+evidence/
+tests/
+app_backup.py
+.env
+*.pyc
