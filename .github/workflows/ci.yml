@@ -42,7 +42,7 @@ jobs:
         run: docker build -t devguard:ci .
 
       - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: devguard:ci
           format: table
