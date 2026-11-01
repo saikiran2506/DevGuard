@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          python -m pip install --only-binary=:all: -r requirements-dev.txt
 
       - name: Run tests
         run: python -m pytest -v
@@ -39,7 +39,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Docker image
-        run: docker build -t devguard:ci .
+        run: docker build --pull -t devguard:ci .
+
+      - name: Smoke test container
+        run: |
+          docker run -d --name smoke -p 5000:5000 devguard:ci
+          for i in $(seq 1 20); do curl -fs http://localhost:5000/health && break || sleep 2; done
+          curl -fs http://localhost:5000/health
+          curl -fsI http://localhost:5000/static/socket.io.min.js
+          docker rm -f smoke
 
       - name: Trivy vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0

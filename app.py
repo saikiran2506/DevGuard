@@ -12,9 +12,10 @@ from prometheus_client import (
 )
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get(
-    "FLASK_SECRET_KEY", "devguard-local-development-only"
+app.config["SECRET_KEY"] = (
+    os.environ.get("FLASK_SECRET_KEY") or os.urandom(32).hex()
 )
+APP_COLOR = os.environ.get("APP_COLOR", "unknown")
 
 socketio = SocketIO(app, async_mode="threading")
 
@@ -265,7 +266,7 @@ footer { text-align: center; padding: 5px 15px 25px; color: #9098aa; font-size: 
     </section>
 </main>
 
-<footer>DevGuard · Collaborative drawing workspace</footer>
+<footer>DevGuard · Collaborative drawing workspace · served by {{ color }}</footer>
 
 <script src="{{ url_for('static', filename='socket.io.min.js') }}"></script>
 <script>
@@ -448,12 +449,12 @@ if (window.io) {
 
 @app.route("/")
 def index():
-    return render_template_string(PAGE)
+    return render_template_string(PAGE, color=APP_COLOR)
 
 
 @app.route("/health")
 def health():
-    return jsonify(status="healthy"), 200
+    return jsonify(status="healthy", color=APP_COLOR), 200
 
 
 @app.route("/metrics")
