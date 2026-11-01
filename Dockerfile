@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir --only-binary=:all: -r requirements.txt
 
-RUN useradd --system --no-create-home appuser
+   RUN useradd --system --create-home --home-dir /home/appuser appuser
 
 COPY app.py .
 COPY static/ ./static/
