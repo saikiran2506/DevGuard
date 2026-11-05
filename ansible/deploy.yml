@@ -1,0 +1,119 @@
+---
+# DevGuard blue-green deployment (Account A).
+# Run on the server:  ansible-playbook deploy.yml -e image_tag=<7-character Docker Hub tag>
+# The playbook never touches the live colour. It replaces the idle colour, waits until it is
+# healthy, then calls switch-color.sh (which health-checks again before switching Nginx).
+- name: Deploy DevGuard to the idle colour and switch traffic
+  hosts: devguard
+  become: true
+  gather_facts: false
+
+  vars:
+    image_repo: saikiran2506/devguard
+    nginx_conf: /etc/nginx/sites-available/devguard
+    switch_script: /usr/local/bin/switch-color.sh
+    public_health_url: http://127.0.0.1/health
+    container_memory: 150m
+    ports:
+      blue: 5000
+      green: 5001
+
+  tasks:
+    - name: Require the image tag
+      ansible.builtin.assert:
+        that:
+          - image_tag is defined
+          - image_tag | length > 0
+        fail_msg: "Pass the Docker Hub tag with -e image_tag=<7-character tag>"
+        quiet: true
+
+    - name: Make sure Docker is running
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+      tags: [setup]
+
+    - name: Read the live upstream from Nginx
+      ansible.builtin.command: grep -oE "server 127\.0\.0\.1:[0-9]+" {{ nginx_conf }}
+      register: upstream_line
+      changed_when: false
+
+    - name: Work out the live and idle colours
+      ansible.builtin.set_fact:
+        live_colour: "{{ 'green' if (upstream_line.stdout | trim).endswith(':' ~ ports.green) else 'blue' }}"
+        idle_colour: "{{ 'blue' if (upstream_line.stdout | trim).endswith(':' ~ ports.green) else 'green' }}"
+
+    - name: Set the idle container name, port and image
+      ansible.builtin.set_fact:
+        idle_name: "devguard-{{ idle_colour }}"
+        idle_port: "{{ ports[idle_colour] }}"
+        image: "{{ image_repo }}:{{ image_tag }}"
+
+    - name: Show the plan
+      ansible.builtin.debug:
+        msg: "Live colour: {{ live_colour }}. Deploying {{ image }} to the idle colour: {{ idle_colour }} (port {{ idle_port }})"
+
+    - name: Pull the verified image from Docker Hub
+      ansible.builtin.command: docker pull {{ image }}
+      register: pull_result
+      changed_when: "'Downloaded newer image' in pull_result.stdout"
+
+    - name: Record the image digest
+      ansible.builtin.command: docker image inspect {{ image }} --format "{% raw %}{{json .RepoDigests}}{% endraw %}"
+      register: digest
+      changed_when: false
+
+    - name: Remove the old idle container (the live colour is not touched)
+      ansible.builtin.command: docker rm -f {{ idle_name }}
+      register: remove_result
+      changed_when: idle_name in remove_result.stdout
+      failed_when: remove_result.rc != 0 and 'No such container' not in remove_result.stderr
+
+    - name: Start the new version on the idle colour
+      ansible.builtin.command: >
+        docker run -d --name {{ idle_name }} --restart unless-stopped
+        -p 127.0.0.1:{{ idle_port }}:5000 -e APP_COLOR={{ idle_colour }}
+        --memory {{ container_memory }} {{ image }}
+      register: run_result
+      changed_when: true
+
+    - name: Wait until the app answers /health on the idle port
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ idle_port }}/health"
+        return_content: true
+      register: idle_health
+      until: idle_health.status == 200
+      retries: 20
+      delay: 3
+
+    - name: Wait until Docker reports the container healthy
+      ansible.builtin.command: docker inspect {{ idle_name }} --format "{% raw %}{{.State.Health.Status}}{% endraw %}"
+      register: health_status
+      until: health_status.stdout | trim == "healthy"
+      retries: 20
+      delay: 5
+      changed_when: false
+
+    - name: Switch traffic to the new colour (the script health-checks first and aborts if unhealthy)
+      ansible.builtin.command: "{{ switch_script }} {{ idle_colour }}"
+      register: switch_result
+      changed_when: "'SWITCHED' in switch_result.stdout"
+
+    - name: Confirm the public site now reports the new colour
+      ansible.builtin.uri:
+        url: "{{ public_health_url }}"
+        return_content: true
+      register: public_health
+      until: public_health.json is defined and public_health.json.color == idle_colour
+      retries: 10
+      delay: 2
+
+    - name: Deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "Image: {{ image }}"
+          - "Digest: {{ digest.stdout | trim }}"
+          - "Previous colour (still running, rollback target): {{ live_colour }}"
+          - "Live colour now: {{ public_health.json.color }}"
+          - "Rollback: ansible-playbook rollback.yml -e target={{ live_colour }}"
