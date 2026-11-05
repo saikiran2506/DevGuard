@@ -1,0 +1,90 @@
+---
+# DevGuard single-container deployment (Account B).
+# Run on the Account B server:
+#   ansible-playbook -i inventory-b.ini deploy_single.yml -e image_tag=<7-character Docker Hub tag>
+- name: Deploy the verified DevGuard image on the Account B server
+  hosts: devguard
+  become: true
+  gather_facts: false
+
+  vars:
+    image_repo: saikiran2506/devguard
+    container_name: devguard-b
+    app_color: account-b
+    host_port: 80
+    container_memory: 150m
+
+  tasks:
+    - name: Require the image tag
+      ansible.builtin.assert:
+        that:
+          - image_tag is defined
+          - image_tag | length > 0
+        fail_msg: "Pass the Docker Hub tag with -e image_tag=<7-character tag>"
+        quiet: true
+
+    - name: Install Docker
+      ansible.builtin.apt:
+        name: docker.io
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      tags: [setup]
+
+    - name: Make sure Docker is running
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+      tags: [setup]
+
+    - name: Set the image name
+      ansible.builtin.set_fact:
+        image: "{{ image_repo }}:{{ image_tag }}"
+
+    - name: Pull the verified image from Docker Hub
+      ansible.builtin.command: docker pull {{ image }}
+      register: pull_result
+      changed_when: "'Downloaded newer image' in pull_result.stdout"
+
+    - name: Record the image digest
+      ansible.builtin.command: docker image inspect {{ image }} --format "{% raw %}{{json .RepoDigests}}{% endraw %}"
+      register: digest
+      changed_when: false
+
+    - name: Remove the old container
+      ansible.builtin.command: docker rm -f {{ container_name }}
+      register: remove_result
+      changed_when: container_name in remove_result.stdout
+      failed_when: remove_result.rc != 0 and 'No such container' not in remove_result.stderr
+
+    - name: Start the new version
+      ansible.builtin.command: >
+        docker run -d --name {{ container_name }} --restart unless-stopped
+        -p {{ host_port }}:5000 -e APP_COLOR={{ app_color }}
+        --memory {{ container_memory }} {{ image }}
+      changed_when: true
+
+    - name: Wait until /health answers with the expected colour
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ host_port }}/health"
+        return_content: true
+      register: app_health
+      until: app_health.status == 200 and app_health.json.color == app_color
+      retries: 20
+      delay: 3
+
+    - name: Wait until Docker reports the container healthy
+      ansible.builtin.command: docker inspect {{ container_name }} --format "{% raw %}{{.State.Health.Status}}{% endraw %}"
+      register: health_status
+      until: health_status.stdout | trim == "healthy"
+      retries: 20
+      delay: 5
+      changed_when: false
+
+    - name: Deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "Image: {{ image }}"
+          - "Digest: {{ digest.stdout | trim }}"
+          - "Health: {{ app_health.json }}"
