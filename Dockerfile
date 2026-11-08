@@ -6,7 +6,7 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --only-binary=:all: -r requirements.txt
+RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.txt
 
    RUN useradd --system --create-home --home-dir /home/appuser appuser
 
