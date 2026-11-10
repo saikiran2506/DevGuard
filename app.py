@@ -662,7 +662,7 @@ def on_cursor(data):
 
 
 @socketio.on("clear")
-def on_clear():
+def on_clear(data=None):
     with state_lock:
         room_id, room = current_room(request.sid)
         if room is None:
